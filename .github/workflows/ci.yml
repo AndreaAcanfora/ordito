@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - run: mvn -B verify
+
+  simulation:
+    name: 5,000 simulated runs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - run: mvn -B -q package -DskipTests
+      - name: Random seeds, 5 nodes
+        run: java -jar ordito-sim/target/ordito-sim.jar --seed ${{ github.run_number }}000 --runs 3000 | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Random seeds, 3 nodes
+        run: java -jar ordito-sim/target/ordito-sim.jar --seed ${{ github.run_number }}000 --runs 2000 --nodes 3 | tee -a "$GITHUB_STEP_SUMMARY"
+
+  chaos:
+    name: Real processes under faults
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - name: Install the official Redis tools
+        run: sudo apt-get update -q && sudo apt-get install -y -q redis-tools
+      - run: mvn -B -q package -DskipTests
+      - name: 60 s of partitions, kill -9 and SIGSTOP, then a linearizability check
+        run: java -jar ordito-chaos/target/ordito-chaos.jar --server ordito-server/target/ordito-server.jar --time 60 --seed ${{ github.run_number }}
+      - name: The same, with a deliberate bug the checker must catch
+        run: |
+          if java -jar ordito-chaos/target/ordito-chaos.jar --server ordito-server/target/ordito-server.jar --time 45 --seed 2 --unsafe-stale-reads; then
+            echo "the stale-reads bug was not caught" >&2
+            exit 1
+          fi
+      - name: redis-cli and redis-benchmark against a 3-node cluster
+        run: |
+          java -jar ordito-server/target/ordito-server.jar --demo > demo.log 2>&1 &
+          for i in $(seq 1 50); do redis-cli -p 6381 ping >/dev/null 2>&1 && break; sleep 0.2; done
+          sleep 2
+          test "$(redis-cli -c -p 6381 set hello world)" = OK
+          test "$(redis-cli -c -p 6383 get hello)" = world
+          leader=$(for p in 6381 6382 6383; do redis-cli -p $p raft status | grep -q role:leader && echo $p; done)
+          {
+            echo "### redis-benchmark against the leader of a 3-node cluster on one runner ($(nproc) vCPU)"
+            echo '```'
+            redis-benchmark -p "$leader" -t set,get -n 50000 -c 50 -q | tr '\r' '\n' | grep -v 'rps='
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  playground:
+    name: Browser playground
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: mvn -B -q install -DskipTests
+      - run: mvn -B -q -Pplayground -pl ordito-playground package
+      - name: The browser build replays seeds exactly like the JVM
+        run: scripts/check-determinism.sh 30
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ordito-playground/target/site
+
+  deploy-playground:
+    name: Publish the playground
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [build, playground]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - name: Check the tag matches the version in the pom
+        run: |
+          version=$(mvn -B -q help:evaluate -Dexpression=project.version -DforceStdout)
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "pom says $version, tag is $GITHUB_REF_NAME" >&2; exit 1; }
+      - run: mvn -B verify
+      - name: Publish the jars
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes=$(awk "/^## \\[${GITHUB_REF_NAME#v}\\]/{flag=1; next} /^## \\[/{flag=0} flag" CHANGELOG.md)
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "$notes" \
+            ordito-server/target/ordito-server.jar \
+            ordito-sim/target/ordito-sim.jar \
+            ordito-chaos/target/ordito-chaos.jar
