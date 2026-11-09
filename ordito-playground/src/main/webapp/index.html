@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ordito playground</title>
+  <meta name="description" content="Raft in your browser: crash nodes, cut the network, inject real bugs and watch a deterministic simulator and a linearizability checker catch them.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Recursive:slnt,wght,CASL,MONO@-15..0,300..900,0..1,0..1&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M6 4v24M12 4v24M18 4v24M24 4v24' stroke='%232f5d8a' stroke-width='3'/%3E%3Cpath d='M3 12h26M3 20h26' stroke='%23b23a3a' stroke-width='3'/%3E%3C/svg%3E">
+</head>
+<body>
+  <header class="top">
+    <div class="title">
+      <h1>ordito</h1>
+      <p>Raft you can break. Crash nodes, cut links, inject real bugs: the same Java code that runs the
+        server runs here, in a deterministic simulator, and a checker tells you when the cluster lied.</p>
+    </div>
+    <nav>
+      <a href="https://github.com/AndreaAcanfora/ordito">Source on GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="stage" aria-label="Cluster">
+      <div class="banner" id="banner" hidden></div>
+      <svg id="ring" viewBox="-400 -300 800 600" role="img" aria-label="The cluster: nodes, links and messages in flight"></svg>
+      <div class="popover" id="popover" hidden></div>
+      <div class="legend" aria-label="Legend">
+        <span><i class="dot append"></i>entries</span>
+        <span><i class="dot heartbeat"></i>heartbeat</span>
+        <span><i class="dot vote"></i>vote request</span>
+        <span><i class="dot ack"></i>ok</span>
+        <span><i class="dot nack"></i>rejected</span>
+      </div>
+      <div class="timeline">
+        <button id="play" class="primary" aria-label="Pause">Pause</button>
+        <input id="scrub" type="range" min="0" max="0" value="0" step="10" aria-label="Simulated time: drag to travel back">
+        <output id="clock">0.00 s</output>
+      </div>
+      <p class="hint">Click a node to crash, pause or isolate it. Click a link to cut it. Drag the timeline to go back in time: the simulation is deterministic, so the past replays exactly.</p>
+    </section>
+
+    <aside class="panel">
+      <section>
+        <h2>Run</h2>
+        <div class="row">
+          <label>Speed <input id="speed" type="range" min="0" max="100" value="35"></label>
+          <output id="speedOut"></output>
+        </div>
+        <div class="row toggles">
+          <label><input id="clients" type="checkbox" checked> Clients writing and reading</label>
+          <label><input id="faults" type="checkbox"> Random faults</label>
+        </div>
+        <div class="row">
+          <button id="write">Write x = 1</button>
+          <button id="heal">Heal the network</button>
+          <button id="check">Check linearizability</button>
+        </div>
+        <div class="row small">
+          <label>Nodes <select id="nodes"><option>3</option><option selected>5</option><option>7</option></select></label>
+          <label>Seed <input id="seed" type="number" value="1" min="1"></label>
+          <button id="restart">Start over</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Watch a bug happen</h2>
+        <p class="note">Each one is a real Raft mistake. The seed is the first one the simulator found that exposes it.</p>
+        <ul class="bugs" id="bugs"></ul>
+      </section>
+
+      <section>
+        <h2>What happened</h2>
+        <ol class="events" id="events"></ol>
+      </section>
+
+      <section id="verdictBox" hidden>
+        <h2>Checker</h2>
+        <div id="verdict"></div>
+      </section>
+    </aside>
+
+    <section class="loom" aria-label="Logs">
+      <div class="loom-head">
+        <h2>The logs, woven</h2>
+        <p>One thread per node, one cell per entry, dyed by the term that wrote it. Solid cells are committed. Raft's job is to make every thread agree.</p>
+      </div>
+      <div id="loom"></div>
+    </section>
+  </main>
+
+  <footer>
+    <p>ordito is open source (MIT). The simulator, the checker and Raft itself are compiled from Java to JavaScript with TeaVM; nothing here talks to a server.</p>
+  </footer>
+
+  <script src="ordito.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
