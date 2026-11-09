@@ -71,11 +71,14 @@ jobs:
       - name: redis-cli and redis-benchmark against a 3-node cluster
         run: |
           java -jar ordito-server/target/ordito-server.jar --demo > demo.log 2>&1 &
-          for i in $(seq 1 50); do redis-cli -p 6381 ping >/dev/null 2>&1 && break; sleep 0.2; done
-          sleep 2
-          test "$(redis-cli -c -p 6381 set hello world)" = OK
+          # wait until a leader accepts writes
+          for i in $(seq 1 100); do [ "$(redis-cli -c -p 6381 set hello world 2>/dev/null)" = OK ] && break; sleep 0.2; done
           test "$(redis-cli -c -p 6383 get hello)" = world
-          leader=$(for p in 6381 6382 6383; do redis-cli -p $p raft status | grep -q role:leader && echo $p; done)
+          leader=""
+          for p in 6381 6382 6383; do
+            if redis-cli -p "$p" raft status | grep -q role:leader; then leader=$p; fi
+          done
+          test -n "$leader"
           {
             echo "### redis-benchmark against the leader of a 3-node cluster on one runner ($(nproc) vCPU)"
             echo '```'
