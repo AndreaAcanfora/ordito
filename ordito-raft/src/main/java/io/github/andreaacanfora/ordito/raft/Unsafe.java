@@ -15,6 +15,9 @@ public enum Unsafe {
     /** Entries from earlier terms are committed by counting replicas (the bug in figure 8 of the paper). */
     COMMIT_PREVIOUS_TERM,
 
-    /** Reads are served at the leader's commit index without confirming it is still the leader. */
+    /**
+     * Reads are served at once at the leader's commit index: without confirming it is still the leader,
+     * and without waiting for an entry of its term to commit (a new leader's commit index can be stale).
+     */
     STALE_READS
 }
