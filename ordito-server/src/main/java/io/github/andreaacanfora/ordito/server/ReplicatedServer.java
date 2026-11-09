@@ -129,8 +129,12 @@ public final class ReplicatedServer implements Closeable {
                     loaded.truncatedBytes());
         }
         List<Integer> ids = options.cluster().stream().map(Member::id).toList();
-        Config config = Config.of(options.id(), ids).withTicks(ELECTION_TICKS, HEARTBEAT_TICKS)
-                .withUnsafe(options.unsafeStaleReads() ? Set.of(Unsafe.STALE_READS) : Set.of());
+        Config config = Config.of(options.id(), ids).withTicks(ELECTION_TICKS, HEARTBEAT_TICKS);
+        if (options.unsafeStaleReads()) {
+            // The classic broken "lease read": answer reads locally, and keep believing in a leadership
+            // that a partition has already ended. For showing what the checker catches; never in real use.
+            config = config.withUnsafe(Set.of(Unsafe.STALE_READS)).withCheckQuorum(false);
+        }
         raft = new RaftNode(config, loaded.hardState(), loaded.entries(), new Rng(System.nanoTime() ^ options.id()));
 
         Map<Integer, InetSocketAddress> peers = new HashMap<>();

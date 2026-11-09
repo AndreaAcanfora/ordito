@@ -28,7 +28,8 @@ public final class Main {
                   --bind <address>         address to listen on (default 127.0.0.1)
                   --tick-ms <n>            Raft tick (default 20: heartbeats every 60 ms, elections after 300-600 ms)
                   --peer-via <id=host:port,...>  reach some peers through another address (a proxy)
-                  --unsafe-stale-reads     serve reads without confirming leadership (a deliberate bug, for tests)
+                  --unsafe-stale-reads     a deliberate bug, for tests: serve reads without confirming leadership,
+                                           and let a partitioned leader keep thinking it leads (no check-quorum)
 
             Then: redis-cli -c -p 6381   (-c follows the MOVED redirect that followers send to the leader)
             """;
