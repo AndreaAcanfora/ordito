@@ -99,6 +99,7 @@ public final class ReplicatedServer implements Closeable {
     private volatile boolean running;
     private volatile Status status = new Status(Role.FOLLOWER, 0, RaftNode.NONE, 0, 0, 0);
     private final List<Thread> threads = new ArrayList<>();
+    private Thread loopThread; // never interrupted: an interrupt during a write closes a FileChannel
     private final Set<ClientConnection> connections = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     // Owned by the raft loop.
@@ -154,7 +155,7 @@ public final class ReplicatedServer implements Closeable {
         clients = new ServerSocket();
         clients.setReuseAddress(true);
         clients.bind(new InetSocketAddress(bind, self.clientPort()), 1024);
-        threads.add(Thread.ofVirtual().name("raft-loop").start(this::loop));
+        loopThread = Thread.ofVirtual().name("raft-loop").start(this::loop);
         threads.add(Thread.ofVirtual().name("raft-ticker").start(this::ticker));
         threads.add(Thread.ofVirtual().name("client-accept").start(this::acceptClients));
         return this;
@@ -180,6 +181,9 @@ public final class ReplicatedServer implements Closeable {
             } catch (InterruptedException e) {
                 return;
             } catch (UncheckedIOException e) {
+                if (!running) {
+                    return; // shutting down: the storage is being closed under us
+                }
                 // The disk failed: continuing could break Raft's promises. Stop the node.
                 System.err.println("ordito: node " + options.id() + ": disk error, stopping: " + e.getCause().getMessage());
                 running = false;
@@ -484,6 +488,9 @@ public final class ReplicatedServer implements Closeable {
             transport.close();
         }
         threads.forEach(Thread::interrupt);
+        if (loopThread != null) {
+            threads.add(loopThread); // it sees running == false within one poll and exits
+        }
         for (Thread t : threads) {
             try {
                 t.join(2000);
