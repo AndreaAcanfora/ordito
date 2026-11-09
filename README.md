@@ -203,11 +203,13 @@ seed and replays your actions.
 
 ## Numbers
 
-On a 10-core Apple M-series laptop: a 24-second simulated run of a 5-node cluster takes 0.1 to 0.2 s on
-the JVM and 0.05 to 0.3 s in the browser; 10,000 runs take under three minutes. The replicated server is
-bound by fsync: on macOS `FileChannel.force` is a full flush of the drive cache, so three nodes sharing
-one laptop SSD do about 1,400 writes/s with 50 clients, and reads (ReadIndex, no disk) 12,000 to 19,000/s.
-CI prints a `redis-benchmark` run on Linux in its summary.
+On a 10-core Apple M-series laptop a 24-second simulated run of a 5-node cluster takes 0.1 to 0.2 s on
+the JVM and up to 0.3 s in the browser; 10,000 runs take under three minutes.
+
+The replicated server is bound by fsync. On a GitHub Actions Linux runner, with three nodes sharing the
+runner's disk, `redis-benchmark` against the leader (50 clients) gives about **17,000 writes/s** (p50
+2.2 ms) and **34,000 reads/s** (p50 0.8 ms). On macOS `FileChannel.force` flushes the whole drive cache,
+and the same test does about 1,400 writes/s. CI prints a fresh run in its summary.
 
 ## Limits
 
