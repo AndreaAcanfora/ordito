@@ -89,7 +89,7 @@ public final class KvModel implements Model<KvModel.Register, KvModel.Op, KvMode
         String call = switch (op.kind()) {
             case GET -> "get(" + op.key() + ")";
             case PUT -> "put(" + op.key() + ", " + op.value() + ")";
-            case CAS -> "cas(" + op.key() + ", " + op.expected() + " -> " + op.value() + ")";
+            case CAS -> "cas(" + op.key() + ", " + (op.expected() == null ? "nil" : op.expected()) + " -> " + op.value() + ")";
             case SWAP -> "swap(" + op.key() + ", " + op.value() + ")";
         };
         if (reply == null) {

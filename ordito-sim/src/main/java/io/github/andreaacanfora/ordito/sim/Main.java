@@ -26,6 +26,7 @@ public final class Main {
               --no-faults       no crashes, pauses or partitions
               --bug <name>      inject a bug (repeatable): %s
               --log             print every event of the run (elections, faults, client operations)
+              --fingerprint     print one line of counters per seed (used to check JVM and browser agree)
               --help            show this help
             """.formatted(String.join(", ", bugNames()));
 
@@ -35,6 +36,7 @@ public final class Main {
         long seed = System.nanoTime() & 0xffff_ffffL;
         int runs = 1;
         boolean showLog = false;
+        boolean fingerprint = false;
         SimConfig base = SimConfig.defaults(0);
         Set<Bug> bugs = EnumSet.noneOf(Bug.class);
         try {
@@ -47,6 +49,7 @@ public final class Main {
                     }
                     case "--no-faults" -> base = base.withFaults(false);
                     case "--log" -> showLog = true;
+                    case "--fingerprint" -> fingerprint = true;
                     case "--seed", "--runs", "--nodes", "--clients", "--time", "--bug" -> {
                         if (i + 1 >= args.length) {
                             throw new IllegalArgumentException(a + " needs a value");
@@ -73,6 +76,12 @@ public final class Main {
         base = base.withBugs(bugs);
         for (Bug bug : bugs) {
             System.out.println("injected bug: " + bug.cliName() + " (" + bug.description() + ")");
+        }
+        if (fingerprint) {
+            for (int i = 0; i < runs; i++) {
+                System.out.println(fingerprint(new Simulation(base.withSeed(seed + i)).run()));
+            }
+            return;
         }
         int code = runs == 1 ? single(base.withSeed(seed), showLog) : many(base, seed, runs);
         System.exit(code);
@@ -106,6 +115,7 @@ public final class Main {
         AtomicBoolean stop = new AtomicBoolean();
         AtomicLong done = new AtomicLong();
         AtomicLong simulatedMs = new AtomicLong();
+        // Only failures are kept: holding every finished run would fill the heap on long hunts.
         List<Future<Simulation>> futures = new ArrayList<>();
         try (ExecutorService pool = Executors.newFixedThreadPool(threads)) {
             for (int i = 0; i < runs; i++) {
@@ -119,22 +129,23 @@ public final class Main {
                     if (done.incrementAndGet() % 1000 == 0) {
                         System.out.printf("  %d runs...%n", done.get());
                     }
-                    if (!sim.ok()) {
-                        stop.set(true);
+                    if (sim.ok()) {
+                        return null;
                     }
+                    stop.set(true);
                     return sim;
                 }));
             }
             Simulation firstFailure = null;
             for (Future<Simulation> f : futures) {
                 Simulation sim = f.get();
-                if (sim != null && !sim.ok() && (firstFailure == null || sim.config().seed() < firstFailure.config().seed())) {
+                if (sim != null && (firstFailure == null || sim.config().seed() < firstFailure.config().seed())) {
                     firstFailure = sim;
                 }
             }
             double seconds = (System.nanoTime() - start) / 1e9;
             if (firstFailure != null) {
-                System.out.printf(Locale.ROOT, "%d runs before the failure, %.1f s%n%n", done.get(), seconds);
+                System.out.printf(Locale.ROOT, "found after %.1f s (%d runs finished)%n%n", seconds, done.get());
                 report(firstFailure);
                 return 1;
             }
@@ -142,6 +153,14 @@ public final class Main {
                     runs, simulatedMs.get() / 3_600_000.0, seconds);
             return 0;
         }
+    }
+
+    /** Counters that differ if anything at all about a run differs. The playground prints the same line. */
+    static String fingerprint(Simulation sim) {
+        var s = sim.stats();
+        return "seed=" + sim.config().seed() + " failure=" + sim.failure() + " elections=" + s.elections()
+                + " messages=" + s.messages() + " committed=" + s.committedEntries() + " operations=" + s.operations()
+                + " history=" + sim.historyDigest();
     }
 
     private static void report(Simulation sim) {

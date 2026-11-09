@@ -56,7 +56,7 @@ public final class Simulation {
 
     record Tick(int node, int generation) implements Event {}
 
-    record Deliver(Message message) implements Event {}
+    record Deliver(Message message, long sent) implements Event {}
 
     record ToNode(int node, int client, long opId, Op op) implements Event {}
 
@@ -520,6 +520,20 @@ public final class Simulation {
         };
     }
 
+    /** A short label for a log entry, like {@code k1=42}, for the playground. */
+    public static String label(Entry e) {
+        if (e.isNoop()) {
+            return "noop";
+        }
+        Op op = Command.decode(e.data()).op();
+        return switch (op.kind()) {
+            case PUT -> op.key() + "=" + op.value();
+            case CAS -> op.key() + ":" + (op.expected() == null ? "nil" : op.expected()) + "\u2192" + op.value();
+            case SWAP -> op.key() + "\u21c4" + op.value();
+            case GET -> "get " + op.key();
+        };
+    }
+
     private String describe(Entry e) {
         if (e.isNoop()) {
             return "a no-op of term " + e.term();
@@ -539,9 +553,9 @@ public final class Simulation {
             messagesDropped++;
             return;
         }
-        schedule(1 + netRng.nextInt(environment.maxLatencyMs()), new Deliver(m));
+        schedule(1 + netRng.nextInt(environment.maxLatencyMs()), new Deliver(m, now));
         if (netRng.chance(environment.duplicateRate())) {
-            schedule(1 + netRng.nextInt(environment.maxLatencyMs() * 2), new Deliver(m));
+            schedule(1 + netRng.nextInt(environment.maxLatencyMs() * 2), new Deliver(m, now));
         }
     }
 
@@ -946,6 +960,23 @@ public final class Simulation {
         return List.copyOf(history);
     }
 
+    /**
+     * A digest of the client history (FNV-1a over its text). Unlike {@code hashCode()}, which depends on
+     * object identity for enums, it is the same on every platform, so JVM and browser runs can be compared.
+     */
+    public String historyDigest() {
+        long h = 0xcbf29ce484222325L;
+        for (Operation<Op, Reply> op : history) {
+            String line = op.client() + " " + KvModel.INSTANCE.describe(op.input(), op.output()) + " " + op.called()
+                    + " " + (op.unknown() ? -1 : op.returned()) + "\n";
+            for (int i = 0; i < line.length(); i++) {
+                h ^= line.charAt(i);
+                h *= 0x100000001b3L;
+            }
+        }
+        return Long.toHexString(h);
+    }
+
     public Node node(int id) {
         return nodes[id];
     }
@@ -974,13 +1005,85 @@ public final class Simulation {
         List<InFlight> out = new ArrayList<>();
         for (Scheduled s : queue) {
             if (s.event instanceof Deliver d) {
-                out.add(new InFlight(d.message(), s.time));
+                out.add(new InFlight(d.message(), d.sent(), s.time));
             }
         }
         return out;
     }
 
-    public record InFlight(Message message, long arrives) {}
+    public record InFlight(Message message, long sent, long arrives) {}
+
+    // ---- interactive control, for the playground ----
+
+    /** Turns the random fault injector on or off. */
+    public void setFaultsActive(boolean on) {
+        if (on && !faultsActive) {
+            schedule(100 + nemesisRng.nextInt(500), new Nemesis());
+        }
+        faultsActive = on;
+    }
+
+    public boolean faultsActive() {
+        return faultsActive;
+    }
+
+    /** Starts or stops the clients (operations in flight still finish). */
+    public void setClientsActive(boolean on) {
+        boolean wasOn = clientsActive;
+        clientsActive = on;
+        if (on && !wasOn) {
+            for (Client c : clients) {
+                if (!c.busy) {
+                    schedule(clientRng.nextInt(20), new ClientNext(c.id - 1));
+                }
+            }
+        }
+    }
+
+    public boolean clientsActive() {
+        return clientsActive;
+    }
+
+    public void crash(int id) {
+        crash(nodes[id]);
+    }
+
+    public void restart(int id) {
+        restart(nodes[id]);
+    }
+
+    public void pause(int id, long ms) {
+        pause(nodes[id], ms);
+    }
+
+    public void resume(int id) {
+        Node n = nodes[id];
+        if (n.up && n.paused) {
+            resume(n);
+        }
+    }
+
+    /** Cuts or restores the link between two nodes, in both directions. */
+    public void setLink(int a, int b, boolean cut) {
+        blocked[a][b] = cut;
+        blocked[b][a] = cut;
+        note((cut ? "cut" : "restored") + " the link n" + a + " - n" + b);
+    }
+
+    /** Lets a client write right now (from the playground's "write" button). */
+    public void clientWrite(String key, String value) {
+        for (Client c : clients) {
+            if (!c.busy) {
+                c.op = Op.put(key, value);
+                c.opId = nextOpId++;
+                c.called = now;
+                c.busy = true;
+                sendToNode(c);
+                schedule(CLIENT_TIMEOUT_MS, new ClientTimeout(c.id - 1, c.opId));
+                return;
+            }
+        }
+    }
 
     public Environment environment() {
         return environment;
