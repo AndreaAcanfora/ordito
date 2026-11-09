@@ -1,0 +1,3 @@
+[submodule "loomkv"]
+	path = loomkv
+	url = https://github.com/AndreaAcanfora/loomkv.git
